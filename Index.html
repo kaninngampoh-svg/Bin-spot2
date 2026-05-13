@@ -458,6 +458,81 @@
       .sidebar { height: auto; max-height: 240px; border-left: none; border-top: 2px solid rgba(39,174,96,0.25); }
       .header-stats { display: none; }
     }
+
+    /* ───── AUTH ───── */
+    .btn-login {
+      border: none;
+      border-radius: 20px;
+      padding: 7px 16px;
+      font-family: 'Sarabun', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: var(--green-mid);
+      color: var(--white);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .btn-login:hover { background: var(--green-bright); }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .user-avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 2px solid var(--green-bright);
+      object-fit: cover;
+    }
+    .user-name {
+      font-weight: 600;
+      color: var(--ink);
+      max-width: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .btn-logout {
+      border: 1.5px solid rgba(0,0,0,0.15);
+      border-radius: 12px;
+      padding: 3px 10px;
+      font-family: 'Sarabun', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      color: var(--muted);
+      transition: all 0.15s;
+    }
+    .btn-logout:hover { background: rgba(0,0,0,0.06); }
+
+    /* ปุ่มลบใน feed */
+    .feed-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .btn-delete-pin {
+      border: none;
+      background: transparent;
+      color: var(--red);
+      font-size: 0.75rem;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 6px;
+      transition: all 0.15s;
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+    .btn-delete-pin:hover { background: #fdecea; }
   </style>
 </head>
 <body>
@@ -483,6 +558,17 @@
     <div class="stat-pill">
       <span class="dot"></span>
       <span>Live · <span id="binCount">0</span> จุด</span>
+    </div>
+    <!-- Auth UI -->
+    <div id="auth-login">
+      <button class="btn-login" onclick="loginWithGoogle()">🔑 เข้าสู่ระบบ</button>
+    </div>
+    <div id="auth-user" style="display:none;">
+      <div class="user-info">
+        <img class="user-avatar" id="user-avatar" src="" alt="">
+        <span class="user-name" id="user-name"></span>
+        <button class="btn-logout" onclick="logoutUser()">ออก</button>
+      </div>
     </div>
   </div>
 </header>
@@ -542,6 +628,7 @@
      ═══════════════════════════════════════════ -->
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 
 <script>
   // ════════════════════════════════════════════
@@ -578,7 +665,10 @@
   let pendingLatLng = null;            // พิกัดที่กำลังจะเพิ่ม
   let activeInfoWindow = null;         // InfoWindow ที่เปิดอยู่ (ปิดก่อนเปิดอัน new)
   let binMarkers = {};                 // { firebaseKey: google.maps.Marker }
+  let binData = {};                    // { firebaseKey: bin object } เก็บข้อมูลเต็ม
   let db = null;
+  let auth = null;
+  let currentUser = null;              // Firebase user ที่ login อยู่
 
   const CHOM_BUENG = { lat: 13.62153, lng: 99.58899 };
 
@@ -589,10 +679,38 @@
     try {
       firebase.initializeApp(FIREBASE_CONFIG);
       db = firebase.database();
+      auth = firebase.auth();
+
+      // ติดตาม login state
+      auth.onAuthStateChanged((user) => {
+        currentUser = user;
+        if (user) {
+          document.getElementById('auth-login').style.display = 'none';
+          document.getElementById('auth-user').style.display = 'flex';
+          document.getElementById('user-name').textContent = user.displayName?.split(' ')[0] || 'ผู้ใช้';
+          document.getElementById('user-avatar').src = user.photoURL || '';
+          showToast(`👋 ยินดีต้อนรับ ${user.displayName?.split(' ')[0] || ''}`);
+        } else {
+          document.getElementById('auth-login').style.display = 'flex';
+          document.getElementById('auth-user').style.display = 'none';
+        }
+        updateFeed(); // รีเฟรช feed เพื่อแสดง/ซ่อนปุ่มลบ
+      });
     } catch(e) {
       showToast("⚠️ Firebase ยังไม่ได้ตั้งค่า — ข้อมูลจะไม่ sync");
       db = null;
     }
+  }
+
+  function loginWithGoogle() {
+    if (!auth) { showToast("⚠️ Firebase ยังไม่พร้อม"); return; }
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(() => showToast("❌ เข้าสู่ระบบไม่สำเร็จ"));
+  }
+
+  function logoutUser() {
+    if (!auth) return;
+    auth.signOut().then(() => showToast("👋 ออกจากระบบแล้ว"));
   }
 
   // ════════════════════════════════════════════
@@ -663,12 +781,13 @@
       updateFeed();
     });
 
-    // ลบหมุด (optional — ถ้ามีระบบ admin ลบในอนาคต)
+    // ลบหมุด real-time
     binsRef.on('child_removed', (snapshot) => {
       const key = snapshot.key;
       if (binMarkers[key]) {
         binMarkers[key].setMap(null);
         delete binMarkers[key];
+        delete binData[key];
       }
       updateFeed();
     });
@@ -716,23 +835,28 @@
       )
     });
 
-    marker.addListener('click', () => onMarkerClick(marker, bin));
+    marker.addListener('click', () => onMarkerClick(marker, bin, key));
     binMarkers[key] = marker;
+    binData[key] = bin;  // เก็บข้อมูลเต็มไว้ใช้ตอนลบ
     updateCount();
   }
 
-  function onMarkerClick(marker, bin) {
+  function onMarkerClick(marker, bin, key) {
     if (activeInfoWindow) activeInfoWindow.close();
 
     const iw = new google.maps.InfoWindow();
     activeInfoWindow = iw;
 
+    // ปุ่มลบ — แสดงเฉพาะเจ้าของและไม่ใช่ preset
+    const isOwner = currentUser && bin.uid && currentUser.uid === bin.uid;
+    const deleteBtn = (isOwner && !bin.preset)
+      ? `<button onclick="deletePin('${key}')" style="margin-top:8px;width:100%;padding:6px;background:#fdecea;border:1.5px solid #e74c3c;border-radius:6px;color:#e74c3c;font-weight:700;font-size:12px;cursor:pointer;font-family:'Sarabun',sans-serif;">🗑 ลบหมุดนี้</button>`
+      : '';
+
     if (currentMode === 'view' && userLocation) {
-      // แสดง loading content ก่อน
       iw.setContent(infoHtml(bin.title, `<p style="color:#666;font-size:12px">กำลังคำนวณเส้นทาง...</p>`));
       iw.open(map, marker);
 
-      // ล้างเส้นทางเก่าถูกต้อง
       directionsRenderer.setMap(null);
       directionsRenderer.setMap(map);
 
@@ -749,20 +873,23 @@
               <p style="margin:3px 0;color:#1a5c38;font-weight:700;font-size:13px">📏 ${leg.distance.text}</p>
               <p style="margin:3px 0;color:#1a5c38;font-weight:700;font-size:13px">⏱️ ${leg.duration.text}</p>
             </div>
-            <p style="color:#888;font-size:11px">กดปุ่ม "ล้างเส้นทาง" เพื่อยกเลิก</p>`
+            <p style="color:#888;font-size:11px">กดปุ่ม "ล้างเส้นทาง" เพื่อยกเลิก</p>
+            ${deleteBtn}`
           ));
           document.getElementById('btn-clear').classList.add('visible');
         } else {
-          iw.setContent(infoHtml(bin.title, `<p style="color:#e74c3c;font-size:13px">ไม่สามารถหาเส้นทางได้</p>`));
+          iw.setContent(infoHtml(bin.title, `<p style="color:#e74c3c;font-size:13px">ไม่สามารถหาเส้นทางได้</p>${deleteBtn}`));
         }
       });
     } else if (currentMode === 'view' && !userLocation) {
       iw.setContent(infoHtml(bin.title,
-        `<p style="color:#e74c3c;font-size:13px">กรุณากด "ตำแหน่งของฉัน" ก่อน</p>`
+        `<p style="color:#e74c3c;font-size:13px">กรุณากด "ตำแหน่งของฉัน" ก่อน</p>${deleteBtn}`
       ));
       iw.open(map, marker);
     } else {
-      iw.setContent(infoHtml(bin.title, `<p style="color:#666;font-size:12px">📍 ${bin.lat.toFixed(5)}, ${bin.lng.toFixed(5)}</p>`));
+      iw.setContent(infoHtml(bin.title,
+        `<p style="color:#666;font-size:12px">📍 ${bin.lat.toFixed(5)}, ${bin.lng.toFixed(5)}</p>${deleteBtn}`
+      ));
       iw.open(map, marker);
     }
   }
@@ -786,12 +913,20 @@
     }
     if (!pendingLatLng) return;
 
+    if (!currentUser) {
+      showToast("⚠️ กรุณาเข้าสู่ระบบก่อนปักหมุด");
+      closeModal();
+      return;
+    }
+
     const newBin = {
       lat: pendingLatLng.lat,
       lng: pendingLatLng.lng,
       title: name,
       timestamp: Date.now(),
-      preset: false
+      preset: false,
+      uid: currentUser.uid,
+      addedBy: currentUser.displayName || 'ไม่ระบุ'
     };
 
     if (db) {
@@ -799,7 +934,6 @@
         .then(() => showToast("✅ เพิ่มถังขยะสำเร็จ! ทุกคนจะเห็นทันที"))
         .catch(() => showToast("❌ บันทึกล้มเหลว กรุณาลองใหม่"));
     } else {
-      // ไม่มี Firebase — เพิ่มเฉพาะ local
       const localKey = 'local_' + Date.now();
       addBinMarker(localKey, newBin);
       updateFeed();
@@ -808,6 +942,23 @@
 
     closeModal();
     setMode('view');
+  }
+
+  // ════════════════════════════════════════════
+  //  ลบหมุด — เฉพาะเจ้าของเท่านั้น
+  // ════════════════════════════════════════════
+  function deletePin(key) {
+    if (!currentUser) { showToast("⚠️ กรุณาเข้าสู่ระบบก่อน"); return; }
+    const bin = binData[key];
+    if (!bin || bin.uid !== currentUser.uid) { showToast("❌ คุณไม่มีสิทธิ์ลบหมุดนี้"); return; }
+
+    if (!confirm(`ลบ "${bin.title}" ออกจากแผนที่?`)) return;
+
+    if (activeInfoWindow) { activeInfoWindow.close(); activeInfoWindow = null; }
+
+    db.ref('bins/' + key).remove()
+      .then(() => showToast("🗑 ลบหมุดเรียบร้อยแล้ว"))
+      .catch(() => showToast("❌ ลบไม่สำเร็จ กรุณาลองใหม่"));
   }
 
   // ════════════════════════════════════════════
@@ -895,17 +1046,31 @@
     const keys = Object.keys(binMarkers);
     if (!keys.length) { feed.innerHTML = '<div class="feed-empty">ยังไม่มีข้อมูล</div>'; return; }
 
-    // สร้างรายการจาก binMarkers
     let html = '';
     keys.slice().reverse().forEach(key => {
       const m = binMarkers[key];
+      const bin = binData[key] || {};
       const isPreset = key.startsWith('preset_');
+      const isOwner = currentUser && bin.uid && currentUser.uid === bin.uid;
+
       const badge = isPreset
         ? '<span class="feed-badge badge-preset">ข้อมูลเดิม</span>'
         : '<span class="feed-badge badge-new">ใหม่</span>';
+
+      const addedBy = (!isPreset && bin.addedBy)
+        ? `<span style="color:var(--muted)">โดย ${bin.addedBy}</span>`
+        : '';
+
+      const delBtn = (isOwner && !isPreset)
+        ? `<button class="btn-delete-pin" onclick="event.stopPropagation(); deletePin('${key}')">🗑 ลบ</button>`
+        : '';
+
       html += `<div class="feed-item" onclick="panToMarker('${key}')">
-        <div class="feed-item-title">${m.getTitle()}</div>
-        <div class="feed-item-meta">${badge}</div>
+        <div class="feed-item-row">
+          <div class="feed-item-title">${m.getTitle()}</div>
+          ${delBtn}
+        </div>
+        <div class="feed-item-meta">${badge} ${addedBy}</div>
       </div>`;
     });
     feed.innerHTML = html;
